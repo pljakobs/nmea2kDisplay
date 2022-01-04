@@ -15,11 +15,12 @@
 //#define ESP32_CAN_TX_PIN GPIO_NUM_16 // Uncomment this and set right CAN TX pin definition, if you use ESP32 and do not have TX on default IO 16
 //#define ESP32_CAN_RX_PIN GPIO_NUM_17 // Uncomment this and set right CAN RX pin definition, if you use ESP32 and do not have RX on default IO 4
 //#define NMEA2000_ARDUINO_DUE_CAN_BUS tNMEA2000_due::CANDevice1    // Uncomment this, if you want to use CAN bus 1 instead of 0 for Arduino DUE
+#define ENGINE_RPM_INPUT 36
+#define RPMUpdatePeriod 250
+
 #include <NMEA2000_CAN.h>
 #include <N2kMessages.h>
 #include <N2kMessagesEnumToStr.h>
-
-const unsigned long TransmitMessages[] PROGMEM={127488L,0};
 
 typedef struct {
   unsigned long PGN;
@@ -84,33 +85,40 @@ Stream *OutputStream;
 
 void HandleNMEA2000Msg(const tN2kMsg &N2kMsg);
 
+const unsigned long TransmitMessages[] PROGMEM={127488L,0};
+
 void setup() {
   Serial.begin(115200); delay(500);
   OutputStream = &Serial;
   //   while (!Serial)
+  pinMode(ENGINE_RPM_INPUT,INPUT);
+
+  // Set Product information
+  NMEA2000.SetProductInformation("00000002", // Manufacturer's Model serial code
+                                 100, // Manufacturer's product code
+                                 "Simple wind monitor",  // Manufacturer's Model ID
+                                 "1.1.0.22 (2016-12-31)",  // Manufacturer's Software version code
+                                 "1.1.0.0 (2016-12-31)" // Manufacturer's Model version
+                                 );
+  // Set device information
+  NMEA2000.SetDeviceInformation(1, // Unique number. Use e.g. Serial number.
+                                130, // Device function=Atmospheric. See codes on http://www.nmea.org/Assets/20120726%20nmea%202000%20class%20&%20function%20codes%20v%202.00.pdf
+                                85, // Device class=External Environment. See codes on  http://www.nmea.org/Assets/20120726%20nmea%202000%20class%20&%20function%20codes%20v%202.00.pdf
+                                2046 // Just choosen free from code list on http://www.nmea.org/Assets/20121020%20nmea%202000%20registration%20list.pdf                               
+                               );
 
   //  NMEA2000.SetN2kCANReceiveFrameBufSize(50);
   // Do not forward bus messages at all
   NMEA2000.SetForwardType(tNMEA2000::fwdt_Text);
   NMEA2000.SetForwardStream(OutputStream);
+  NMEA2000.SetMode(tNMEA2000::N2km_ListenAndNode,23);
+
   // Set false below, if you do not want to see messages parsed to HEX withing library
   NMEA2000.EnableForward(false);
   NMEA2000.SetMsgHandler(HandleNMEA2000Msg);
-  //  NMEA2000.SetN2kCANMsgBufSize(2);
-  NMEA2000.SetProductInformation("00000001", // Manufacturer's Model serial code
-                                100, // Manufacturer's product code
-                                "Simple rpm monitor",  // Manufacturer's Model ID
-                                "0.0.0.1 (2022-01-04)",  // Manufacturer's Software version code
-                                "0.0.0.1 (2022-01-04)" // Manufacturer's Model version
-                                );
-  // Set device information
-  NMEA2000.SetDeviceInformation(112233, // Unique number. Use e.g. Serial number.
-                                130, // Device function=Temperature. See codes on http://www.nmea.org/Assets/20120726%20nmea%202000%20class%20&%20function%20codes%20v%202.00.pdf
-                                75, // Device class=Sensor Communication Interface. See codes on  http://www.nmea.org/Assets/20120726%20nmea%202000%20class%20&%20function%20codes%20v%202.00.pdf
-                                2040 // Just choosen free from code list on http://www.nmea.org/Assets/20121020%20nmea%202000%20registration%20list.pdf                               
-                               );
-  NMEA2000.SetMode(tNMEA2000::N2km_ListenAndNode,22);
+  //  NMEA2000.SetN2kCANMsgBufSize(2)
   NMEA2000.ExtendTransmitMessages(TransmitMessages);
+
   NMEA2000.Open();
   OutputStream->print("Running...");
 }
@@ -134,6 +142,17 @@ template<typename T> void PrintLabelValWithConversionCheckUnDef(const char* labe
     }
   } else OutputStream->print("not available");
   if (AddLf) OutputStream->println();
+}
+
+void SendN2kRPM() {
+  static unsigned long RPMUpdated=millis();
+  tN2kMsg N2kMsg;
+
+  if ( RPMUpdated+RPMUpdatePeriod<millis() ) {
+    SetN2kEngineParamRapid(N2kMsg, (unsigned char)0, getEngineRev(),(double)0, (int8_t)0 );
+    RPMUpdated=millis();
+    NMEA2000.SendMsg(N2kMsg);
+  }
 }
 
 //*****************************************************************************
@@ -729,7 +748,18 @@ void HandleNMEA2000Msg(const tN2kMsg &N2kMsg) {
 }
 
 //*****************************************************************************
+//Engine rev measurement
+double getEngineRev(){
+  int revs;
+  revs=(double)analogRead(ENGINE_RPM_INPUT); 
+  OutputStream->print(" ===RPM=== :"); OutputStream->println(revs);
+  return revs;
+}
+
+
+//*****************************************************************************
 void loop()
 {
   NMEA2000.ParseMessages();
+  SendN2kRPM();
 }

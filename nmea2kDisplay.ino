@@ -19,6 +19,8 @@
 #include <N2kMessages.h>
 #include <N2kMessagesEnumToStr.h>
 
+const unsigned long TransmitMessages[] PROGMEM={127488L,0};
+
 typedef struct {
   unsigned long PGN;
   void (*Handler)(const tN2kMsg &N2kMsg);
@@ -95,6 +97,20 @@ void setup() {
   NMEA2000.EnableForward(false);
   NMEA2000.SetMsgHandler(HandleNMEA2000Msg);
   //  NMEA2000.SetN2kCANMsgBufSize(2);
+  NMEA2000.SetProductInformation("00000001", // Manufacturer's Model serial code
+                                100, // Manufacturer's product code
+                                "Simple rpm monitor",  // Manufacturer's Model ID
+                                "0.0.0.1 (2022-01-04)",  // Manufacturer's Software version code
+                                "0.0.0.1 (2022-01-04)" // Manufacturer's Model version
+                                );
+  // Set device information
+  NMEA2000.SetDeviceInformation(112233, // Unique number. Use e.g. Serial number.
+                                130, // Device function=Temperature. See codes on http://www.nmea.org/Assets/20120726%20nmea%202000%20class%20&%20function%20codes%20v%202.00.pdf
+                                75, // Device class=Sensor Communication Interface. See codes on  http://www.nmea.org/Assets/20120726%20nmea%202000%20class%20&%20function%20codes%20v%202.00.pdf
+                                2040 // Just choosen free from code list on http://www.nmea.org/Assets/20121020%20nmea%202000%20registration%20list.pdf                               
+                               );
+  NMEA2000.SetMode(tNMEA2000::N2km_ListenAndNode,22);
+  NMEA2000.ExtendTransmitMessages(TransmitMessages);
   NMEA2000.Open();
   OutputStream->print("Running...");
 }

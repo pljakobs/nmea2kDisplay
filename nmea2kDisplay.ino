@@ -9,6 +9,15 @@
 // without interrupt.
 
 #include <Arduino.h>
+#include <NMEAParser.h>
+#include <NMEA2000_CAN.h>
+#include <N2kMessages.h>
+#include <N2kMessagesEnumToStr.h>
+#include <BluetoothSerial.h>
+#include <BTAddress.h>
+#include <BTAdvertisedDevice.h>
+#include <BTScan.h>
+
 //#define N2k_SPI_CS_PIN 53    // Pin for SPI select for mcp_can
 //#define N2k_CAN_INT_PIN 21   // Interrupt pin for mcp_can
 //#define USE_MCP_CAN_CLOCK_SET 8  // Uncomment this, if your mcp_can shield has 8MHz chrystal
@@ -17,10 +26,7 @@
 //#define NMEA2000_ARDUINO_DUE_CAN_BUS tNMEA2000_due::CANDevice1    // Uncomment this, if you want to use CAN bus 1 instead of 0 for Arduino DUE
 #define ENGINE_RPM_INPUT 36
 #define RPMUpdatePeriod 250
-
-#include <NMEA2000_CAN.h>
-#include <N2kMessages.h>
-#include <N2kMessagesEnumToStr.h>
+#define LED_BUILTIN 2
 
 typedef struct {
   unsigned long PGN;
@@ -53,6 +59,10 @@ void UserDatumSettings(const tN2kMsg &N2kMsg);
 void GNSSSatsInView(const tN2kMsg &N2kMsg);
 void Wind(const tN2kMsg &N2kMsg);
 
+NMEAParser<2> NMEAparser;
+BluetoothSerial SerialBT;
+Stream *OutputStream;
+
 tNMEA2000Handler NMEA2000Handlers[] = {
   //{126992L, &SystemTime},
   //{127245L, &Rudder },
@@ -81,31 +91,52 @@ tNMEA2000Handler NMEA2000Handlers[] = {
   {0, 0}
 };
 
-Stream *OutputStream;
+
+const unsigned long TransmitMessages[] PROGMEM={127488L,0};
+bool BTconnected;
+String BTname="AntaresMasthead";
 
 void HandleNMEA2000Msg(const tN2kMsg &N2kMsg);
 
-const unsigned long TransmitMessages[] PROGMEM={127488L,0};
 
 void setup() {
-  Serial.begin(115200); delay(500);
-  OutputStream = &Serial;
-  //   while (!Serial)
   pinMode(ENGINE_RPM_INPUT,INPUT);
-
+  pinMode(LED_BUILTIN, OUTPUT);
+  
+  Serial.begin(115200); 
+  delay(500);
+  OutputStream = &Serial;
+  
+  SerialBT.begin("AntaresBase");
+    
+  BTconnected=SerialBT.connect(BTname);
+  delay(500);
+  if(BTconnected){
+    digitalWrite(LED_BUILTIN,HIGH);
+  }
+  
   // Set Product information
   NMEA2000.SetProductInformation("00000002", // Manufacturer's Model serial code
-                                 100, // Manufacturer's product code
-                                 "Simple wind monitor",  // Manufacturer's Model ID
-                                 "1.1.0.22 (2016-12-31)",  // Manufacturer's Software version code
-                                 "1.1.0.0 (2016-12-31)" // Manufacturer's Model version
+                                 291, // Manufacturer's product code
+                                 "Data Display and nmea Gateway",  // Manufacturer's Model ID
+                                 "0.0.0.1 (2022-01-10)",  // Manufacturer's Software version code
+                                 "0.0.0.1 (2022-01-03)" // Manufacturer's Model version
                                  );
   // Set device information
-  NMEA2000.SetDeviceInformation(1, // Unique number. Use e.g. Serial number.
+  NMEA2000.SetDeviceInformation(2, // Unique number. Use e.g. Serial number.
                                 130, // Device function=Atmospheric. See codes on http://www.nmea.org/Assets/20120726%20nmea%202000%20class%20&%20function%20codes%20v%202.00.pdf
-                                85, // Device class=External Environment. See codes on  http://www.nmea.org/Assets/20120726%20nmea%202000%20class%20&%20function%20codes%20v%202.00.pdf
+                                 85, // Device class=External Environment. See codes on  http://www.nmea.org/Assets/20120726%20nmea%202000%20class%20&%20function%20codes%20v%202.00.pdf
+                                135, //nmea 0183 gateway
+                                120, //display
                                 2046 // Just choosen free from code list on http://www.nmea.org/Assets/20121020%20nmea%202000%20registration%20list.pdf                               
                                );
+
+  // Wind Sentence
+  // WIMWV,ddd,R,xx.x,N,A*cc 
+  // ddd-> relative direction
+  // xx.x-> speed in m/s
+  // cc-> checksum
+  NMEAparser.addHandler("WIMWV",handleWind);
 
   //  NMEA2000.SetN2kCANReceiveFrameBufSize(50);
   // Do not forward bus messages at all
@@ -142,6 +173,17 @@ template<typename T> void PrintLabelValWithConversionCheckUnDef(const char* labe
     }
   } else OutputStream->print("not available");
   if (AddLf) OutputStream->println();
+}
+
+
+void handleWind(void) {
+  int windAngle;
+  float windSpeed;
+  tN2kMsg N2kMsg;
+  NMEAparser.getArg(0,windAngle);
+  NMEAparser.getArg(2,windSpeed);
+  SetN2kWindSpeed(N2kMsg, 1, windSpeed, windAngle,N2kWind_Apparent);
+  NMEA2000.SendMsg(N2kMsg);
 }
 
 void SendN2kRPM() {
@@ -760,6 +802,10 @@ double getEngineRev(){
 //*****************************************************************************
 void loop()
 {
+  while(SerialBT.available()){
+    NMEAparser<<SerialBT.read();
+  }
   NMEA2000.ParseMessages();
   SendN2kRPM();
+  
 }
